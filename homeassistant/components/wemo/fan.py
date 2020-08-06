@@ -1,5 +1,4 @@
 """Support for WeMo humidifier."""
-import asyncio
 from datetime import timedelta
 import logging
 
@@ -15,10 +14,9 @@ from homeassistant.components.fan import (
     FanEntity,
 )
 from homeassistant.helpers import entity_platform
-from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
+from . import async_get_wemo_device
 from .const import (
-    DOMAIN as WEMO_DOMAIN,
     SERVICE_RESET_FILTER_LIFE,
     SERVICE_SET_HUMIDITY,
 )
@@ -88,20 +86,9 @@ SET_HUMIDITY_SCHEMA = {
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
-    """Set up WeMo binary sensors."""
-
-    async def _discovered_wemo(device):
-        """Handle a discovered Wemo device."""
-        async_add_entities([WemoHumidifier(device)])
-
-    async_dispatcher_connect(hass, f"{WEMO_DOMAIN}.fan", _discovered_wemo)
-
-    await asyncio.gather(
-        *[
-            _discovered_wemo(device)
-            for device in hass.data[WEMO_DOMAIN]["pending"].pop("fan")
-        ]
-    )
+    """Set up WeMo fan sensors."""
+    device = await async_get_wemo_device(hass, config_entry.data, remove_cache=True)
+    async_add_entities([WemoHumidifier(device)])
 
     platform = entity_platform.current_platform.get()
 

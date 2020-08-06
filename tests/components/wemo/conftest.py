@@ -2,7 +2,7 @@
 import pytest
 import pywemo
 
-from homeassistant.components.wemo import CONF_DISCOVERY, CONF_STATIC
+from homeassistant.components.wemo import CONF_STATIC
 from homeassistant.components.wemo.const import DOMAIN
 from homeassistant.setup import async_setup_component
 
@@ -26,14 +26,30 @@ def pywemo_registry_fixture():
     registry = create_autospec(pywemo.SubscriptionRegistry, instance=True)
 
     registry.callbacks = {}
+    registry.devices = {}
+
+    def register(device):
+        registry.devices[device.name] = device
+
+    registry.register.side_effect = register
 
     def on_func(device, type_filter, callback):
         registry.callbacks[device.name] = callback
 
     registry.on.side_effect = on_func
 
+    def unregister(device):
+        del registry.callbacks[device.name]
+        del registry.devices[device.name]
+
+    registry.unregister.side_effect = unregister
+
     with patch("pywemo.SubscriptionRegistry", return_value=registry):
         yield registry
+
+    # Verify that any devices which registered also cleanly unregistered.
+    assert len(registry.callbacks) == 0
+    assert len(registry.devices) == 0
 
 
 @pytest.fixture(name="pywemo_device")
@@ -62,7 +78,6 @@ async def async_wemo_entity_fixture(hass, pywemo_device):
         DOMAIN,
         {
             DOMAIN: {
-                CONF_DISCOVERY: False,
                 CONF_STATIC: [f"{MOCK_HOST}:{MOCK_PORT}"],
             },
         },
@@ -74,3 +89,7 @@ async def async_wemo_entity_fixture(hass, pywemo_device):
     assert len(entity_entries) == 1
 
     yield entity_entries[0]
+
+    # Unload the entry to trigger any cleanups.
+    assert await hass.config_entries.async_unload(entity_entries[0].config_entry_id)
+    await hass.async_block_till_done()

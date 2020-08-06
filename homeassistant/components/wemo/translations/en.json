@@ -1,12 +1,23 @@
 {
     "config": {
         "abort": {
-            "no_devices_found": "No devices found on the network",
-            "single_instance_allowed": "Already configured. Only a single configuration possible."
+            "already_configured": "Device is already configured",
+            "no_devices_found": "No devices found on the network"
         },
+        "error": {
+            "cannot_connect": "Failed to connect",
+            "cannot_determine_port": "The Port number could not be discovered automatically"
+        },
+        "flow_title": "WeMo: {name}",
         "step": {
             "confirm": {
-                "description": "Do you want to set up Wemo?"
+                "description": "Do you want to start set up? ({name})"
+            },
+            "user": {
+                "data": {
+                    "host": "IP Address",
+                    "port": "Port"
+                }
             }
         }
     }

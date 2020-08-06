@@ -1,5 +1,4 @@
 """Support for WeMo switches."""
-import asyncio
 from datetime import datetime, timedelta
 import logging
 
@@ -7,10 +6,9 @@ from pywemo.ouimeaux_device.api.service import ActionException
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_STANDBY, STATE_UNKNOWN
-from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.util import convert
 
-from .const import DOMAIN as WEMO_DOMAIN
+from . import async_get_wemo_device
 from .entity import WemoSubscriptionEntity
 
 SCAN_INTERVAL = timedelta(seconds=10)
@@ -34,19 +32,8 @@ WEMO_STANDBY = 8
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up WeMo switches."""
-
-    async def _discovered_wemo(device):
-        """Handle a discovered Wemo device."""
-        async_add_entities([WemoSwitch(device)])
-
-    async_dispatcher_connect(hass, f"{WEMO_DOMAIN}.switch", _discovered_wemo)
-
-    await asyncio.gather(
-        *[
-            _discovered_wemo(device)
-            for device in hass.data[WEMO_DOMAIN]["pending"].pop("switch")
-        ]
-    )
+    device = await async_get_wemo_device(hass, config_entry.data, remove_cache=True)
+    async_add_entities([WemoSwitch(device)])
 
 
 class WemoSwitch(WemoSubscriptionEntity, SwitchEntity):

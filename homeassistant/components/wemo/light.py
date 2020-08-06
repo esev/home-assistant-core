@@ -17,9 +17,9 @@ from homeassistant.components.light import (
     SUPPORT_TRANSITION,
     LightEntity,
 )
-from homeassistant.helpers.dispatcher import async_dispatcher_connect
 import homeassistant.util.color as color_util
 
+from . import async_get_wemo_device
 from .const import DOMAIN as WEMO_DOMAIN
 from .entity import WemoEntity, WemoSubscriptionEntity
 
@@ -39,24 +39,13 @@ WEMO_OFF = 0
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up WeMo lights."""
-
-    async def _discovered_wemo(device):
-        """Handle a discovered Wemo device."""
-        if device.model_name == "Dimmer":
-            async_add_entities([WemoDimmer(device)])
-        else:
-            await hass.async_add_executor_job(
-                setup_bridge, hass, device, async_add_entities
-            )
-
-    async_dispatcher_connect(hass, f"{WEMO_DOMAIN}.light", _discovered_wemo)
-
-    await asyncio.gather(
-        *[
-            _discovered_wemo(device)
-            for device in hass.data[WEMO_DOMAIN]["pending"].pop("light")
-        ]
-    )
+    device = await async_get_wemo_device(hass, config_entry.data, remove_cache=True)
+    if device.model_name == "Dimmer":
+        async_add_entities([WemoDimmer(device)])
+    else:
+        await hass.async_add_executor_job(
+            setup_bridge, hass, device, async_add_entities
+        )
 
 
 def setup_bridge(hass, bridge, async_add_entities):

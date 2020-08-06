@@ -1,19 +1,28 @@
-"""Support for WeMo device discovery."""
-import asyncio
+"""WeMo device setup and static configuration."""
 import logging
+from typing import Optional, Tuple
 
 import pywemo
 import requests
 import voluptuous as vol
 
-from homeassistant import config_entries
+
 from homeassistant.components.binary_sensor import DOMAIN as BINARY_SENSOR_DOMAIN
 from homeassistant.components.fan import DOMAIN as FAN_DOMAIN
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
-from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
+from homeassistant.const import (
+    CONF_DOMAIN,
+    CONF_HOST,
+    CONF_PORT,
+    EVENT_HOMEASSISTANT_STOP,
+)
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.singleton import singleton
+from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN
 
@@ -34,10 +43,10 @@ WEMO_MODEL_DISPATCH = {
 _LOGGER = logging.getLogger(__name__)
 
 
-def coerce_host_port(value):
+def coerce_host_port(value: str) -> Tuple[str, int]:
     """Validate that provided value is either just host or host:port.
 
-    Returns (host, None) or (host, port) respectively.
+    Returns (host, 0) or (host, port) respectively.
     """
     host, _, port = value.partition(":")
 
@@ -47,15 +56,12 @@ def coerce_host_port(value):
     if port:
         port = cv.port(port)
     else:
-        port = None
+        port = 0
 
     return host, port
 
 
 CONF_STATIC = "static"
-CONF_DISCOVERY = "discovery"
-
-DEFAULT_DISCOVERY = True
 
 CONFIG_SCHEMA = vol.Schema(
     {
@@ -64,7 +70,6 @@ CONFIG_SCHEMA = vol.Schema(
                 vol.Optional(CONF_STATIC, default=[]): vol.Schema(
                     [vol.All(cv.string, coerce_host_port)]
                 ),
-                vol.Optional(CONF_DISCOVERY, default=DEFAULT_DISCOVERY): cv.boolean,
             }
         )
     },
@@ -72,28 +77,9 @@ CONFIG_SCHEMA = vol.Schema(
 )
 
 
-async def async_setup(hass, config):
+async def async_setup(hass: HomeAssistant, config) -> bool:
     """Set up for WeMo devices."""
-    hass.data[DOMAIN] = {
-        "config": config.get(DOMAIN, {}),
-        "registry": None,
-        "pending": {},
-    }
-
-    if DOMAIN in config:
-        hass.async_create_task(
-            hass.config_entries.flow.async_init(
-                DOMAIN, context={"source": config_entries.SOURCE_IMPORT}
-            )
-        )
-
-    return True
-
-
-async def async_setup_entry(hass, entry):
-    """Set up a wemo config entry."""
-    config = hass.data[DOMAIN].pop("config")
-
+    hass.data.setdefault(DOMAIN, {})
     # Keep track of WeMo device subscriptions for push updates
     registry = hass.data[DOMAIN]["registry"] = pywemo.SubscriptionRegistry()
     await hass.async_add_executor_job(registry.start)
@@ -105,85 +91,93 @@ async def async_setup_entry(hass, entry):
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop_wemo)
 
-    devices = {}
-
-    static_conf = config.get(CONF_STATIC, [])
-    if static_conf:
-        _LOGGER.debug("Adding statically configured WeMo devices...")
-        for device in await asyncio.gather(
-            *[
-                hass.async_add_executor_job(validate_static_config, host, port)
-                for host, port in static_conf
-            ]
-        ):
-            if device is None:
-                continue
-
-            devices.setdefault(device.serialnumber, device)
-
-    if config.get(CONF_DISCOVERY, DEFAULT_DISCOVERY):
-        _LOGGER.debug("Scanning network for WeMo devices...")
-        for device in await hass.async_add_executor_job(pywemo.discover_devices):
-            devices.setdefault(
-                device.serialnumber,
-                device,
+    # Check for static hosts in the config.
+    wemo_config = config.get(DOMAIN, {})
+    for host, port in wemo_config.get(CONF_STATIC, []):
+        data = {CONF_HOST: host, CONF_PORT: port}
+        hass.async_create_task(
+            hass.config_entries.flow.async_init(
+                DOMAIN, context={"source": SOURCE_IMPORT}, data=data
             )
-
-    loaded_components = set()
-
-    for device in devices.values():
-        _LOGGER.debug(
-            "Adding WeMo device at %s:%i (%s)",
-            device.host,
-            device.port,
-            device.serialnumber,
         )
-
-        component = WEMO_MODEL_DISPATCH.get(device.model_name, SWITCH_DOMAIN)
-
-        # Three cases:
-        # - First time we see component, we need to load it and initialize the backlog
-        # - Component is being loaded, add to backlog
-        # - Component is loaded, backlog is gone, dispatch discovery
-
-        if component not in loaded_components:
-            hass.data[DOMAIN]["pending"][component] = [device]
-            loaded_components.add(component)
-            hass.async_create_task(
-                hass.config_entries.async_forward_entry_setup(entry, component)
-            )
-
-        elif component in hass.data[DOMAIN]["pending"]:
-            hass.data[DOMAIN]["pending"][component].append(device)
-
-        else:
-            async_dispatcher_send(
-                hass,
-                f"{DOMAIN}.{component}",
-                device,
-            )
 
     return True
 
 
-def validate_static_config(host, port):
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up a wemo config entry.
+
+    Verify that the device is setup correctly. This will raise a ConfigEntryNotReady
+    exception if the device is not yet online.
+    """
+    device = await async_get_wemo_device(hass, entry.data)
+
+    domain = WEMO_MODEL_DISPATCH.get(device.model_name, SWITCH_DOMAIN)
+    if entry.data.get(CONF_DOMAIN) != domain:
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, CONF_DOMAIN: domain}
+        )
+    hass.async_create_task(hass.config_entries.async_forward_entry_setup(entry, domain))
+    return True
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload a config entry."""
+    domain = entry.data[CONF_DOMAIN]
+    return await hass.config_entries.async_forward_entry_unload(entry, domain)
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Handle migration of a previous version config entry."""
+    if entry.version == 1:
+        # The WeMo component previously had a single ConfigEntry Discovery ConfigFlow
+        # with multiple devices sharing the same ConfigEntry. That old ConfigEntry
+        # can be removed once all devices have been migrated to new ConfigEntries.
+        # A device will be associated with 2 ConfigEntries (old & new) when it has
+        # been migrated.
+        dev_reg = hass.helpers.device_registry
+        devices = await dev_reg.async_get_registry()
+        device_entries = dev_reg.async_entries_for_config_entry(devices, entry.entry_id)
+        if all(len(device.config_entries) > 1 for device in device_entries):
+            hass.async_create_task(hass.config_entries.async_remove(entry.entry_id))
+        return False
+    return True
+
+
+async def async_get_wemo_device(
+    hass: HomeAssistant, config_data: ConfigType, remove_cache: Optional[bool] = False
+) -> pywemo.WeMoDevice:
+    """Create a WeMoDevice instance or return one from the cache."""
+    host, port = config_data[CONF_HOST], config_data[CONF_PORT]
+    cache = hass.data.setdefault(DOMAIN, {}).setdefault("pywemo_wemodevice_cache", {})
+    cache_key = f"{host}:{port}"
+    device = (cache.pop if remove_cache else cache.get)(cache_key, None)
+    if device is not None:
+        return device
+
+    device = await hass.async_add_executor_job(_get_wemo_device, host, port)
+    cache[cache_key] = device
+    return device
+
+
+def _get_wemo_device(host: str, port: int) -> pywemo.WeMoDevice:
     """Handle a static config."""
     url = pywemo.setup_url_for_address(host, port)
-
-    if not url:
-        _LOGGER.error(
-            "Unable to get description url for WeMo at: %s",
-            f"{host}:{port}" if port else host,
+    if url is None:
+        raise CannotDeterminePortError(
+            "Unable to get description url for WeMo at: %s"
+            % (f"{host}:{port}" if port else host)
         )
-        return None
 
     try:
-        device = pywemo.discovery.device_from_description(url, None)
-    except (
-        requests.exceptions.ConnectionError,
-        requests.exceptions.Timeout,
-    ) as err:
-        _LOGGER.error("Unable to access WeMo at %s (%s)", url, err)
-        return None
+        return pywemo.discovery.device_from_description(url, None)
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as err:
+        raise ConnectError(f"Unable to access WeMo at {url} ({err})") from err
 
-    return device
+
+class ConnectError(ConfigEntryNotReady):
+    """Cannot connect to the wemo device."""
+
+
+class CannotDeterminePortError(ConnectError):
+    """Error to indicate the port cannot be determined automatically."""
