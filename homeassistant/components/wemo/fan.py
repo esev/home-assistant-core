@@ -4,6 +4,7 @@ from datetime import timedelta
 import logging
 
 from pywemo.ouimeaux_device.api.service import ActionException
+from pywemo.ouimeaux_device.humidifier import DesiredHumidity, FanMode
 import voluptuous as vol
 
 from homeassistant.components.fan import (
@@ -36,27 +37,6 @@ ATTR_FILTER_LIFE = "filter_life"
 ATTR_FILTER_EXPIRED = "filter_expired"
 ATTR_WATER_LEVEL = "water_level"
 
-# The WEMO_ constants below come from pywemo itself
-WEMO_ON = 1
-WEMO_OFF = 0
-
-WEMO_HUMIDITY_45 = 0
-WEMO_HUMIDITY_50 = 1
-WEMO_HUMIDITY_55 = 2
-WEMO_HUMIDITY_60 = 3
-WEMO_HUMIDITY_100 = 4
-
-WEMO_FAN_OFF = 0
-WEMO_FAN_MINIMUM = 1
-WEMO_FAN_LOW = 2  # Not used due to limitations of the base fan implementation
-WEMO_FAN_MEDIUM = 3
-WEMO_FAN_HIGH = 4  # Not used due to limitations of the base fan implementation
-WEMO_FAN_MAXIMUM = 5
-
-WEMO_WATER_EMPTY = 0
-WEMO_WATER_LOW = 1
-WEMO_WATER_GOOD = 2
-
 SUPPORTED_SPEEDS = [SPEED_OFF, SPEED_LOW, SPEED_MEDIUM, SPEED_HIGH]
 
 SUPPORTED_FEATURES = SUPPORT_SET_SPEED
@@ -64,12 +44,12 @@ SUPPORTED_FEATURES = SUPPORT_SET_SPEED
 # Since the base fan object supports a set list of fan speeds,
 # we have to reuse some of them when mapping to the 5 WeMo speeds
 WEMO_FAN_SPEED_TO_HASS = {
-    WEMO_FAN_OFF: SPEED_OFF,
-    WEMO_FAN_MINIMUM: SPEED_LOW,
-    WEMO_FAN_LOW: SPEED_LOW,  # Reusing SPEED_LOW
-    WEMO_FAN_MEDIUM: SPEED_MEDIUM,
-    WEMO_FAN_HIGH: SPEED_HIGH,  # Reusing SPEED_HIGH
-    WEMO_FAN_MAXIMUM: SPEED_HIGH,
+    FanMode.Off: SPEED_OFF,
+    FanMode.Minimum: SPEED_LOW,
+    FanMode.Low: SPEED_LOW,  # Reusing SPEED_LOW
+    FanMode.Medium: SPEED_MEDIUM,
+    FanMode.High: SPEED_HIGH,  # Reusing SPEED_HIGH
+    FanMode.Maximum: SPEED_HIGH,
 }
 
 # Because we reused mappings in the previous dict, we have to filter them
@@ -77,7 +57,7 @@ WEMO_FAN_SPEED_TO_HASS = {
 HASS_FAN_SPEED_TO_WEMO = {
     v: k
     for (k, v) in WEMO_FAN_SPEED_TO_HASS.items()
-    if k not in [WEMO_FAN_LOW, WEMO_FAN_HIGH]
+    if k not in [FanMode.Low, FanMode.High]
 }
 
 SET_HUMIDITY_SCHEMA = {
@@ -128,7 +108,7 @@ class WemoHumidifier(WemoSubscriptionEntity, FanEntity):
         self._water_level = None
         self._filter_life = None
         self._filter_expired = None
-        self._last_fan_on_mode = WEMO_FAN_MEDIUM
+        self._last_fan_on_mode = FanMode.Medium
 
     @property
     def icon(self):
@@ -174,7 +154,7 @@ class WemoHumidifier(WemoSubscriptionEntity, FanEntity):
             self._filter_life = self.wemo.filter_life_percent
             self._filter_expired = self.wemo.filter_expired
 
-            if self.wemo.fan_mode != WEMO_FAN_OFF:
+            if self.wemo.fan_mode != FanMode.Off:
                 self._last_fan_on_mode = self.wemo.fan_mode
 
             if not self._available:
@@ -201,7 +181,7 @@ class WemoHumidifier(WemoSubscriptionEntity, FanEntity):
     def turn_off(self, **kwargs) -> None:
         """Turn the switch off."""
         try:
-            self.wemo.set_state(WEMO_FAN_OFF)
+            self.wemo.set_state(FanMode.Off)
         except ActionException as err:
             _LOGGER.warning("Error while turning off device %s (%s)", self.name, err)
             self._available = False
@@ -223,15 +203,15 @@ class WemoHumidifier(WemoSubscriptionEntity, FanEntity):
     def set_humidity(self, target_humidity: float) -> None:
         """Set the target humidity level for the Humidifier."""
         if target_humidity < 50:
-            pywemo_humidity = WEMO_HUMIDITY_45
+            pywemo_humidity = DesiredHumidity.FortyFivePercent
         elif 50 <= target_humidity < 55:
-            pywemo_humidity = WEMO_HUMIDITY_50
+            pywemo_humidity = DesiredHumidity.FiftyPercent
         elif 55 <= target_humidity < 60:
-            pywemo_humidity = WEMO_HUMIDITY_55
+            pywemo_humidity = DesiredHumidity.FiftyFivePercent
         elif 60 <= target_humidity < 100:
-            pywemo_humidity = WEMO_HUMIDITY_60
+            pywemo_humidity = DesiredHumidity.SixtyPercent
         elif target_humidity >= 100:
-            pywemo_humidity = WEMO_HUMIDITY_100
+            pywemo_humidity = DesiredHumidity.OneHundredPercent
 
         try:
             self.wemo.set_humidity(pywemo_humidity)

@@ -1,7 +1,18 @@
 """Tests for the Wemo fan entity."""
 
 import pytest
+from pywemo.ouimeaux_device.humidifier import DesiredHumidity, FanMode
 
+from homeassistant.components.fan import (
+    ATTR_SPEED,
+    DOMAIN as FAN_DOMAIN,
+    SERVICE_SET_SPEED,
+    SERVICE_TURN_OFF,
+    SPEED_HIGH,
+    SPEED_LOW,
+    SPEED_MEDIUM,
+    SPEED_OFF,
+)
 from homeassistant.components.homeassistant import (
     DOMAIN as HA_DOMAIN,
     SERVICE_UPDATE_ENTITY,
@@ -93,15 +104,51 @@ async def test_fan_reset_filter_service(hass, pywemo_device, wemo_entity):
     pywemo_device.reset_filter_life.assert_called_with()
 
 
+async def test_fan_turn_off(hass, pywemo_device, wemo_entity):
+    """Verify that the FAN_DOMAIN.SERVICE_TURN_OFF service works properly."""
+    assert await hass.services.async_call(
+        FAN_DOMAIN,
+        SERVICE_TURN_OFF,
+        {
+            ATTR_ENTITY_ID: wemo_entity.entity_id,
+        },
+        blocking=True,
+    )
+    pywemo_device.set_state.assert_called_with(FanMode.Off)
+
+
 @pytest.mark.parametrize(
     "test_input,expected",
     [
-        (0, fan.WEMO_HUMIDITY_45),
-        (45, fan.WEMO_HUMIDITY_45),
-        (50, fan.WEMO_HUMIDITY_50),
-        (55, fan.WEMO_HUMIDITY_55),
-        (60, fan.WEMO_HUMIDITY_60),
-        (100, fan.WEMO_HUMIDITY_100),
+        (SPEED_HIGH, FanMode.Maximum),
+        (SPEED_MEDIUM, FanMode.Medium),
+        (SPEED_LOW, FanMode.Minimum),
+        (SPEED_OFF, FanMode.Off),
+    ],
+)
+async def test_fan_set_speed(hass, pywemo_device, wemo_entity, test_input, expected):
+    """Verify that the FAN_DOMAIN.SERVICE_SET_SPEED service works properly."""
+    assert await hass.services.async_call(
+        FAN_DOMAIN,
+        SERVICE_SET_SPEED,
+        {
+            ATTR_ENTITY_ID: wemo_entity.entity_id,
+            ATTR_SPEED: test_input,
+        },
+        blocking=True,
+    )
+    pywemo_device.set_state.assert_called_with(expected)
+
+
+@pytest.mark.parametrize(
+    "test_input,expected",
+    [
+        (0, DesiredHumidity.FortyFivePercent),
+        (45, DesiredHumidity.FortyFivePercent),
+        (50, DesiredHumidity.FiftyPercent),
+        (55, DesiredHumidity.FiftyFivePercent),
+        (60, DesiredHumidity.SixtyPercent),
+        (100, DesiredHumidity.OneHundredPercent),
     ],
 )
 async def test_fan_set_humidity_service(
