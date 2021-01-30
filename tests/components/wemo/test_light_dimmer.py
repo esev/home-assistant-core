@@ -1,11 +1,14 @@
 """Tests for the Wemo standalone/non-bridge light entity."""
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from homeassistant.components.homeassistant import (
     DOMAIN as HA_DOMAIN,
     SERVICE_UPDATE_ENTITY,
 )
+from homeassistant.components.wemo.const import DOMAIN
 from homeassistant.const import ATTR_ENTITY_ID, STATE_OFF, STATE_ON
 from homeassistant.setup import async_setup_component
 
@@ -78,3 +81,18 @@ async def test_light_update_entity(hass, pywemo_registry, pywemo_device, wemo_en
         blocking=True,
     )
     assert hass.states.get(wemo_entity.entity_id).state == STATE_OFF
+
+
+async def test_light_set_dimmer_brightness(hass, pywemo_device, wemo_entity):
+    """Verify that set_dimmer_brightness is registered and works."""
+    pywemo_device.basicevent = MagicMock()
+    assert await hass.services.async_call(
+        DOMAIN,
+        "set_dimmer_brightness",
+        {
+            ATTR_ENTITY_ID: wemo_entity.entity_id,
+            "brightness": 25,
+        },
+        blocking=True,
+    )
+    pywemo_device.basicevent.SetBinaryState.assert_called_with(brightness=25)

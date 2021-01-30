@@ -14,3 +14,13 @@ reset_filter_life:
     entity_id:
       description: Names of the WeMo humidifier entities (1 or more entity_ids are required).
       example: "fan.wemo_humidifier"
+
+set_dimmer_brightness:
+  description: Change the brightness, regardless of the current on/off state.
+  fields:
+    entity_id:
+      description: Names of the WeMo light entities (1 or more entity_ids are required).
+      example: "light.wemo_dimmer"
+    brightness:
+      description: Dimmer brightness value as an integer between 0-100.
+      example: 25

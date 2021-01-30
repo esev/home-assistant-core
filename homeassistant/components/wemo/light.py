@@ -4,6 +4,7 @@ from datetime import timedelta
 import logging
 
 from pywemo.ouimeaux_device.api.service import ActionException
+import voluptuous as vol
 
 from homeassistant import util
 from homeassistant.components.light import (
@@ -17,6 +18,7 @@ from homeassistant.components.light import (
     SUPPORT_TRANSITION,
     LightEntity,
 )
+from homeassistant.helpers import entity_platform
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 import homeassistant.util.color as color_util
 
@@ -35,6 +37,11 @@ SUPPORT_WEMO = (
 # The WEMO_ constants below come from pywemo itself
 WEMO_ON = 1
 WEMO_OFF = 0
+
+
+SET_DIMMER_BRIGHTNESS_SCHEMA = {
+    vol.Required("brightness"): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
+}
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
@@ -56,6 +63,13 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
             _discovered_wemo(device)
             for device in hass.data[WEMO_DOMAIN]["pending"].pop("light")
         ]
+    )
+
+    platform = entity_platform.current_platform.get()
+    platform.async_register_entity_service(
+        "set_dimmer_brightness",
+        SET_DIMMER_BRIGHTNESS_SCHEMA,
+        WemoDimmer.set_dimmer_brightness.__name__,
     )
 
 
@@ -221,6 +235,15 @@ class WemoDimmer(WemoSubscriptionEntity, LightEntity):
     def supported_features(self):
         """Flag supported features."""
         return SUPPORT_BRIGHTNESS
+
+    def set_dimmer_brightness(self, brightness: int) -> None:
+        """Change the brightness, regardless of the current on/off state."""
+        try:
+            self.wemo.basicevent.SetBinaryState(brightness=brightness)
+        except (AttributeError, ActionException) as err:
+            _LOGGER.warning("Could not set brightness for %s (%s)", self.name, err)
+            self._available = False
+            self.wemo.reconnect_with_device()
 
     @property
     def brightness(self):
